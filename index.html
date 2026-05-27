@@ -197,9 +197,22 @@ canvas{display:block;border-radius:10px;touch-action:none;}
 </div>
 
 <div id="setup-banner">
-  📋 <strong>Live orders:</strong> open this site on your phone to see orders as they come in.
+  📋 <strong>Live orders:</strong> <span id="sync-status">not configured</span>
   <button class="cfg-btn" onclick="openOrdersPanel()">View orders</button>
   <button class="cfg-btn" onclick="clearAllOrders()" style="margin-left:4px;border-color:rgba(245,213,206,0.4);">Clear all</button>
+  <button class="cfg-btn" onclick="toggleBinSetup()" style="margin-left:4px;" id="cfg-sync-btn">⚙️ Setup sync</button>
+</div>
+<div id="bin-setup-form" style="background:var(--accent-dark);padding:14px 20px 18px;display:none;gap:10px;flex-wrap:wrap;justify-content:center;align-items:flex-end;">
+  <div>
+    <label style="font-size:11px;color:var(--accent-pale);display:block;margin-bottom:4px;letter-spacing:0.08em;text-transform:uppercase;">JSONBin API Key</label>
+    <input type="text" id="bin-api-key" placeholder="$2b$10$..." style="background:rgba(255,255,255,0.1);border:1px solid rgba(245,213,206,0.35);color:#fff;border-radius:6px;padding:7px 10px;font-size:13px;font-family:inherit;width:260px;">
+  </div>
+  <div>
+    <label style="font-size:11px;color:var(--accent-pale);display:block;margin-bottom:4px;letter-spacing:0.08em;text-transform:uppercase;">Bin ID (leave blank to create new)</label>
+    <input type="text" id="bin-id" placeholder="Will be created automatically" style="background:rgba(255,255,255,0.1);border:1px solid rgba(245,213,206,0.35);color:#fff;border-radius:6px;padding:7px 10px;font-size:13px;font-family:inherit;width:260px;">
+  </div>
+  <button onclick="saveBinConfig()" style="background:var(--accent-pale);color:var(--accent-dark);border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-family:inherit;font-weight:500;cursor:pointer;">Save & Connect</button>
+  <button onclick="testBinConnection()" style="background:transparent;border:1px solid rgba(245,213,206,0.4);color:var(--accent-pale);border-radius:6px;padding:8px 14px;font-size:13px;font-family:inherit;cursor:pointer;">Test connection</button>
 </div>
 
 <header>
@@ -1037,23 +1050,124 @@ function playAgainWS(){document.getElementById('ws-win').classList.remove('show'
 ══════════════════════════════════════════ */
 buildMenu();renderCart();
 if(window.location.protocol==='file:')document.getElementById('host-notice').classList.add('show');
-// no telegram config needed
+loadBinConfig();
 // Clean test entries from all leaderboards
 ['lb_maze','lb_beans','lb_matcha','lb_ws'].forEach(key=>{
   try{const lb=JSON.parse(localStorage.getItem(key)||'[]');const cleaned=lb.filter(e=>e.name&&e.name.toLowerCase().trim()!=='test');if(cleaned.length!==lb.length)localStorage.setItem(key,JSON.stringify(cleaned));}catch(e){}
 });
 
 /* ══════════════════════════════════════════
-   LIVE ORDERS PANEL
+   LIVE ORDERS — JSONBin sync
 ══════════════════════════════════════════ */
 let ordersRefreshInterval=null;
+let _binKey='', _binId='', _lastEtag='';
+
+function toggleBinSetup(){
+  const f=document.getElementById('bin-setup-form');
+  f.style.display=f.style.display==='flex'?'none':'flex';
+  if(f.style.display==='flex'){
+    document.getElementById('bin-api-key').value=localStorage.getItem('bin_key')||'';
+    document.getElementById('bin-id').value=localStorage.getItem('bin_id')||'';
+  }
+}
+
+async function saveBinConfig(){
+  const key=document.getElementById('bin-api-key').value.trim();
+  const id=document.getElementById('bin-id').value.trim();
+  if(!key){alert('Please enter your JSONBin API key.');return;}
+  localStorage.setItem('bin_key',key);
+  _binKey=key;
+  if(id){
+    localStorage.setItem('bin_id',id);
+    _binId=id;
+    document.getElementById('bin-setup-form').style.display='none';
+    updateSyncStatus('✅ connected');
+  } else {
+    // Create a new bin
+    updateSyncStatus('Creating bin…');
+    try{
+      const res=await fetch('https://api.jsonbin.io/v3/b',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Master-Key':key,'X-Bin-Name':'ruh-to-ruh-orders'},
+        body:JSON.stringify({orders:[]})
+      });
+      if(!res.ok){
+        const txt=await res.text();
+        updateSyncStatus('❌ error '+res.status);
+        alert('Error '+res.status+': '+txt+'\n\nCheck your API key is correct. It should start with $2b$10$');
+        return;
+      }
+      const data=await res.json();
+      if(data.metadata&&data.metadata.id){
+        _binId=data.metadata.id;
+        localStorage.setItem('bin_id',_binId);
+        document.getElementById('bin-id').value=_binId;
+        document.getElementById('bin-setup-form').style.display='none';
+        updateSyncStatus('✅ connected');
+        alert('Connected! Your Bin ID is: '+_binId+'\n\nSave this — enter it on your other devices.');
+      } else {
+        updateSyncStatus('❌ unexpected response');
+        alert('Unexpected response. Make sure you are using the Master Key, not the Access Key.');
+        console.error(data);
+      }
+    }catch(e){updateSyncStatus('❌ network error');console.error(e);}
+  }
+}
+
+function updateSyncStatus(msg){
+  const el=document.getElementById('sync-status');
+  if(el)el.textContent=msg;
+}
+
+function loadBinConfig(){
+  _binKey=localStorage.getItem('bin_key')||'';
+  _binId=localStorage.getItem('bin_id')||'';
+  if(_binKey&&_binId) updateSyncStatus('✅ connected');
+  else updateSyncStatus('tap ⚙️ Setup sync to connect');
+}
+
+async function fetchOrders(){
+  if(!_binKey||!_binId) return JSON.parse(localStorage.getItem('rtr_orders')||'[]');
+  try{
+    const res=await fetch('https://api.jsonbin.io/v3/b/'+_binId+'/latest',{
+      headers:{'X-Master-Key':_binKey,'X-Bin-Meta':'false'}
+    });
+    if(!res.ok){console.warn('Fetch failed:',res.status);return JSON.parse(localStorage.getItem('rtr_orders')||'[]');}
+    const data=await res.json();
+    const orders=data.record&&data.record.orders?data.record.orders:[];
+    localStorage.setItem('rtr_orders',JSON.stringify(orders));
+    return orders;
+  }catch(e){console.warn('Fetch error:',e);return JSON.parse(localStorage.getItem('rtr_orders')||'[]');}
+}
+
+async function pushOrders(orders){
+  localStorage.setItem('rtr_orders',JSON.stringify(orders));
+  if(!_binKey||!_binId) return;
+  try{
+    await fetch('https://api.jsonbin.io/v3/b/'+_binId,{
+      method:'PUT',
+      headers:{'Content-Type':'application/json','X-Master-Key':_binKey},
+      body:JSON.stringify({orders})
+    });
+  }catch(e){console.warn('Sync error:',e);}
+}
+
+function placeOrderSync(order){
+  const orders=JSON.parse(localStorage.getItem('rtr_orders')||'[]');
+  orders.unshift(order);
+  const trimmed=orders.slice(0,50);
+  pushOrders(trimmed);
+}
 
 function openOrdersPanel(){
-  renderOrdersPanel();
   const ov=document.getElementById('orders-overlay');
   ov.style.display='flex';
   requestAnimationFrame(()=>requestAnimationFrame(()=>ov.classList.add('visible')));
-  ordersRefreshInterval=setInterval(renderOrdersPanel,3000);
+  renderOrdersPanel();
+  ordersRefreshInterval=setInterval(async()=>{
+    const orders=await fetchOrders();
+    renderOrdersList(orders);
+  },4000);
 }
 
 function closeOrdersPanel(){
@@ -1063,13 +1177,17 @@ function closeOrdersPanel(){
   clearInterval(ordersRefreshInterval);
 }
 
-function renderOrdersPanel(){
-  const orders=JSON.parse(localStorage.getItem('rtr_orders')||'[]');
+async function renderOrdersPanel(){
+  const orders=await fetchOrders();
+  renderOrdersList(orders);
+}
+
+function renderOrdersList(orders){
   const list=document.getElementById('orders-list');
   const sub=document.getElementById('orders-subtitle');
   if(!list)return;
   const pending=orders.filter(o=>!o.done).length;
-  if(sub) sub.textContent=pending+' pending · auto-refreshing';
+  if(sub)sub.textContent=pending+' pending · live';
   if(!orders.length){
     list.innerHTML='<div class="orders-empty">No orders yet ✦<br><span style="font-size:12px;">Orders will appear here as customers place them</span></div>';
     return;
@@ -1089,17 +1207,37 @@ function renderOrdersPanel(){
   `).join('');
 }
 
-function toggleOrderDone(id){
-  const orders=JSON.parse(localStorage.getItem('rtr_orders')||'[]');
+async function toggleOrderDone(id){
+  const orders=await fetchOrders();
   const o=orders.find(x=>x.id===id);
-  if(o){o.done=!o.done;localStorage.setItem('rtr_orders',JSON.stringify(orders));}
-  renderOrdersPanel();
+  if(o){o.done=!o.done;await pushOrders(orders);renderOrdersList(orders);}
 }
 
-function clearAllOrders(){
-  if(confirm('Clear all orders?')){
-    localStorage.removeItem('rtr_orders');
-    renderOrdersPanel();
+async function clearAllOrders(){
+  if(confirm('Clear all orders?')){await pushOrders([]);renderOrdersList([]);}
+}
+
+async function testBinConnection(){
+  const key=document.getElementById('bin-api-key').value.trim();
+  const id=document.getElementById('bin-id').value.trim();
+  if(!key){alert('Enter your API key first.');return;}
+  updateSyncStatus('Testing…');
+  try{
+    // Test: list bins (works with just the key)
+    const res=await fetch('https://api.jsonbin.io/v3/b',{
+      headers:{'X-Master-Key':key}
+    });
+    if(res.ok){
+      updateSyncStatus('✅ API key works!');
+      alert('API key is valid ✅\n\nNow click Save & Connect to create your bin.');
+    } else {
+      const txt=await res.text();
+      updateSyncStatus('❌ key invalid');
+      alert('API key not accepted ('+res.status+').\n\nMake sure you copied the full Master Key from jsonbin.io → API Keys.');
+    }
+  }catch(e){
+    updateSyncStatus('❌ network error');
+    alert('Network error: '+e.message+'\n\nIf you are on a local file, this will not work. Upload to GitHub Pages first.');
   }
 }
 

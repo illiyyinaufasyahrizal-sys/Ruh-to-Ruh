@@ -174,6 +174,20 @@ canvas{display:block;border-radius:10px;touch-action:none;}
 /* MATCHA RESULT specific */
 .matcha-msg{font-size:15px;line-height:1.6;margin-top:4px;}
 </style>
+
+<style>
+#orders-overlay.visible #orders-panel{transform:translateX(0);}
+.order-card{background:var(--cream);border:1px solid var(--border);border-radius:14px;padding:14px 16px;transition:opacity 0.3s;}
+.order-card.done{opacity:0.45;}
+.order-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+.order-name{font-family:'DM Serif Display',serif;font-size:17px;color:var(--accent);font-weight:400;}
+.order-time{font-size:11px;color:var(--text-muted);white-space:nowrap;margin-top:3px;}
+.order-items{font-size:13px;color:var(--text);margin-top:6px;line-height:1.6;}
+.order-note{font-size:12px;color:var(--text-muted);margin-top:4px;font-style:italic;}
+.order-done-btn{background:var(--accent);color:var(--white);border:none;border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;flex-shrink:0;margin-top:2px;}
+.order-done-btn.undone{background:transparent;border:1px solid var(--border);color:var(--text-muted);}
+.orders-empty{text-align:center;color:var(--text-muted);font-size:14px;padding:48px 20px;line-height:1.7;}
+</style>
 </head>
 <body>
 
@@ -183,18 +197,9 @@ canvas{display:block;border-radius:10px;touch-action:none;}
 </div>
 
 <div id="setup-banner">
-  ⚙️ Configure iPads so orders reach each host separately.
-  <button class="cfg-btn" onclick="toggleSetup()">Configure</button>
-</div>
-<div id="setup-form">
-  <div class="sf-group"><label>iPad 1 — Bot Token</label><input type="text" id="token1" placeholder="123456:ABCdef…"></div>
-  <div class="sf-group"><label>iPad 1 — Chat ID</label><input type="text" id="chat1" placeholder="-100123456"></div>
-  <div class="sf-group"><label>iPad 2 — Bot Token</label><input type="text" id="token2" placeholder="789012:XYZabc…"></div>
-  <div class="sf-group"><label>iPad 2 — Chat ID</label><input type="text" id="chat2" placeholder="-100789012"></div>
-  <div class="sf-group"><label>This iPad is</label>
-    <select id="ipad-num"><option value="1">iPad 1</option><option value="2">iPad 2</option></select>
-  </div>
-  <button class="save-btn" onclick="saveConfig()">Save & Close</button>
+  📋 <strong>Live orders:</strong> open this site on your phone to see orders as they come in.
+  <button class="cfg-btn" onclick="openOrdersPanel()">View orders</button>
+  <button class="cfg-btn" onclick="clearAllOrders()" style="margin-left:4px;border-color:rgba(245,213,206,0.4);">Clear all</button>
 </div>
 
 <header>
@@ -527,26 +532,8 @@ function cancelAllAF(){if(mazeAF){cancelAnimationFrame(mazeAF);mazeAF=null;}if(b
 /* ══════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════ */
-function toggleSetup(){
-  const f=document.getElementById('setup-form');f.classList.toggle('open');
-  if(f.classList.contains('open')){
-    document.getElementById('token1').value=localStorage.getItem('tg_token1')||'';
-    document.getElementById('chat1').value=localStorage.getItem('tg_chat1')||'';
-    document.getElementById('token2').value=localStorage.getItem('tg_token2')||'';
-    document.getElementById('chat2').value=localStorage.getItem('tg_chat2')||'';
-    document.getElementById('ipad-num').value=localStorage.getItem('ipad_num')||'1';
-  }
-}
-function saveConfig(){
-  localStorage.setItem('tg_token1',document.getElementById('token1').value.trim());
-  localStorage.setItem('tg_chat1',document.getElementById('chat1').value.trim());
-  localStorage.setItem('tg_token2',document.getElementById('token2').value.trim());
-  localStorage.setItem('tg_chat2',document.getElementById('chat2').value.trim());
-  const ipad=document.getElementById('ipad-num').value;
-  localStorage.setItem('ipad_num',ipad);
-  document.getElementById('setup-form').classList.remove('open');
-  document.getElementById('setup-banner').innerHTML=`✅ iPad ${ipad} configured — orders go to the right phone. <button class="cfg-btn" onclick="toggleSetup()">Edit</button>`;
-}
+function toggleSetup(){}
+function saveConfig(){}
 
 /* ══════════════════════════════════════════
    LEADERBOARD
@@ -1050,13 +1037,86 @@ function playAgainWS(){document.getElementById('ws-win').classList.remove('show'
 ══════════════════════════════════════════ */
 buildMenu();renderCart();
 if(window.location.protocol==='file:')document.getElementById('host-notice').classList.add('show');
-const savedIpad=localStorage.getItem('ipad_num');
-if(localStorage.getItem('tg_token'+(savedIpad||'1'))){document.getElementById('setup-banner').innerHTML=`✅ iPad ${savedIpad||1} configured — orders go to the right phone. <button class="cfg-btn" onclick="toggleSetup()">Edit</button>`;}
+// no telegram config needed
 // Clean test entries from all leaderboards
 ['lb_maze','lb_beans','lb_matcha','lb_ws'].forEach(key=>{
   try{const lb=JSON.parse(localStorage.getItem(key)||'[]');const cleaned=lb.filter(e=>e.name&&e.name.toLowerCase().trim()!=='test');if(cleaned.length!==lb.length)localStorage.setItem(key,JSON.stringify(cleaned));}catch(e){}
 });
 
+/* ══════════════════════════════════════════
+   LIVE ORDERS PANEL
+══════════════════════════════════════════ */
+let ordersRefreshInterval=null;
+
+function openOrdersPanel(){
+  renderOrdersPanel();
+  const ov=document.getElementById('orders-overlay');
+  ov.style.display='flex';
+  requestAnimationFrame(()=>requestAnimationFrame(()=>ov.classList.add('visible')));
+  ordersRefreshInterval=setInterval(renderOrdersPanel,3000);
+}
+
+function closeOrdersPanel(){
+  const ov=document.getElementById('orders-overlay');
+  ov.classList.remove('visible');
+  setTimeout(()=>{ov.style.display='none';},370);
+  clearInterval(ordersRefreshInterval);
+}
+
+function renderOrdersPanel(){
+  const orders=JSON.parse(localStorage.getItem('rtr_orders')||'[]');
+  const list=document.getElementById('orders-list');
+  const sub=document.getElementById('orders-subtitle');
+  if(!list)return;
+  const pending=orders.filter(o=>!o.done).length;
+  if(sub) sub.textContent=pending+' pending · auto-refreshing';
+  if(!orders.length){
+    list.innerHTML='<div class="orders-empty">No orders yet ✦<br><span style="font-size:12px;">Orders will appear here as customers place them</span></div>';
+    return;
+  }
+  list.innerHTML=orders.map(o=>`
+    <div class="order-card${o.done?' done':''}" id="ocard-${o.id}">
+      <div class="order-card-top">
+        <div>
+          <div class="order-name">${o.name}</div>
+          <div class="order-time">${o.time}</div>
+        </div>
+        <button class="order-done-btn${o.done?' undone':''}" onclick="toggleOrderDone(${o.id})">${o.done?'Undo':'Done ✓'}</button>
+      </div>
+      <div class="order-items">${o.items}</div>
+      ${o.note?`<div class="order-note">📝 ${o.note}</div>`:''}
+    </div>
+  `).join('');
+}
+
+function toggleOrderDone(id){
+  const orders=JSON.parse(localStorage.getItem('rtr_orders')||'[]');
+  const o=orders.find(x=>x.id===id);
+  if(o){o.done=!o.done;localStorage.setItem('rtr_orders',JSON.stringify(orders));}
+  renderOrdersPanel();
+}
+
+function clearAllOrders(){
+  if(confirm('Clear all orders?')){
+    localStorage.removeItem('rtr_orders');
+    renderOrdersPanel();
+  }
+}
+
 </script>
+
+<!-- ORDERS PANEL OVERLAY -->
+<div id="orders-overlay" class="overlay" style="z-index:500;align-items:flex-start;padding:0;">
+  <div style="background:var(--white);width:100%;max-width:520px;height:100vh;overflow-y:auto;display:flex;flex-direction:column;transform:translateX(-100%);transition:transform 0.35s cubic-bezier(0.34,1.2,0.64,1);opacity:1;" id="orders-panel">
+    <div style="background:var(--accent);padding:18px 20px 14px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:1;">
+      <div>
+        <div style="font-family:'DM Serif Display',serif;color:var(--cream);font-size:20px;font-weight:400;">live orders</div>
+        <div style="font-size:11px;color:var(--accent-pale);margin-top:2px;letter-spacing:0.08em;" id="orders-subtitle">auto-refreshing</div>
+      </div>
+      <button onclick="closeOrdersPanel()" style="background:rgba(245,213,206,0.18);border:1px solid rgba(245,213,206,0.3);color:var(--cream);border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit;">Close</button>
+    </div>
+    <div id="orders-list" style="flex:1;padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
+  </div>
+</div>
 </body>
 </html>

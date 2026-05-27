@@ -209,7 +209,11 @@ canvas{display:block;border-radius:10px;touch-action:none;}
     <label style="font-size:11px;color:var(--accent-pale);display:block;margin-bottom:4px;letter-spacing:0.08em;text-transform:uppercase;">Your Chat ID</label>
     <input type="text" id="tg-chatid" placeholder="123456789" style="background:rgba(255,255,255,0.1);border:1px solid rgba(245,213,206,0.35);color:#fff;border-radius:6px;padding:7px 10px;font-size:13px;font-family:inherit;width:200px;">
   </div>
-  <button onclick="saveTgConfig()" style="background:var(--accent-pale);color:var(--accent-dark);border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-family:inherit;font-weight:500;cursor:pointer;">Save</button>
+  <div style="display:flex;flex-direction:column;gap:6px;">
+    <button onclick="saveTgConfig()" style="background:var(--accent-pale);color:var(--accent-dark);border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-family:inherit;font-weight:500;cursor:pointer;">Save</button>
+    <button onclick="testTelegram()" style="background:transparent;border:1px solid rgba(245,213,206,0.4);color:var(--accent-pale);border-radius:6px;padding:8px 14px;font-size:13px;font-family:inherit;cursor:pointer;">Send test message</button>
+    <div id="tg-test-result" style="font-size:12px;color:var(--accent-pale);text-align:center;min-height:16px;"></div>
+  </div>
 </div>
 
 <header>
@@ -1077,6 +1081,31 @@ function loadTgConfig(){
     document.getElementById('setup-banner').innerHTML='✅ Telegram configured — orders will be sent to your phone. <button class="cfg-btn" onclick="toggleTgSetup()">Edit</button>';
   }
 }
+async function testTelegram(){
+  const token=document.getElementById('tg-token').value.trim();
+  const chatid=document.getElementById('tg-chatid').value.trim();
+  const res_el=document.getElementById('tg-test-result');
+  if(!token||!chatid){res_el.textContent='Enter token and chat ID first.';return;}
+  res_el.textContent='Sending…';
+  try{
+    const res=await fetch('https://api.telegram.org/bot'+token+'/sendMessage',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chat_id:chatid,text:'✅ Test from rūh to rūh — it works!'})
+    });
+    const data=await res.json();
+    if(data.ok){
+      res_el.textContent='✅ Sent! Check Telegram.';
+    } else {
+      res_el.textContent='❌ '+data.description;
+      alert('Error: '+data.description+'. Fix: (1) Open your bot in Telegram and press Start. (2) Check Chat ID via @userinfobot. (3) Verify token via @BotFather.');
+    }
+  }catch(e){
+    res_el.textContent='❌ Network error';
+    alert('Network error: '+e.message);
+  }
+}
+
 async function sendTelegramOrder(msg){
   const token=localStorage.getItem('tg_token');
   const chatid=localStorage.getItem('tg_chatid');
